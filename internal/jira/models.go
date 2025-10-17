@@ -44,13 +44,21 @@ type IssueFields struct {
 	Assignee    *User       `json:"assignee"`
 	Reporter    *User       `json:"reporter"`
 	Parent      *IssueRef   `json:"parent"`
+	Epic        *EpicLink   `json:"epic,omitempty"` // Link all'epic
 	Subtasks    []IssueRef  `json:"subtasks"`
 }
 
 // Status rappresenta lo stato di un ticket
 type Status struct {
-	Name string `json:"name"`
-	ID   string `json:"id"`
+	Name           string         `json:"name"`
+	ID             string         `json:"id"`
+	StatusCategory StatusCategory `json:"statusCategory"`
+}
+
+// StatusCategory rappresenta la categoria di stato (To Do, In Progress, Done)
+type StatusCategory struct {
+	Key  string `json:"key"`  // "new", "indeterminate", "done"
+	Name string `json:"name"` // "To Do", "In Progress", "Done"
 }
 
 // Priority rappresenta la priorità
@@ -78,6 +86,12 @@ type IssueRef struct {
 	ID     string       `json:"id"`
 	Key    string       `json:"key"`
 	Fields *IssueFields `json:"fields,omitempty"`
+}
+
+// EpicLink rappresenta il collegamento a un Epic
+type EpicLink struct {
+	Key     string `json:"key"`
+	Summary string `json:"summary"`
 }
 
 // GetDescriptionText estrae il testo dalla description (gestisce sia string che ADF format)
@@ -114,4 +128,9 @@ func (i *Issue) GetDescriptionText() string {
 	}
 
 	return ""
+}
+
+// IsCompleted verifica se il ticket è nello stato completato
+func (i *Issue) IsCompleted() bool {
+	return i.Fields.Status.StatusCategory.Key == "done"
 }

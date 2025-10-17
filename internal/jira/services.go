@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strings"
 )
 
 // FindNextReleaseVersion trova la prima versione non rilasciata per un dato progetto.
@@ -43,44 +44,134 @@ func FindNextReleaseVersion(client *Client, projectKey string) (*Version, error)
 
 // GetIssuesForVersion recupera tutti i ticket per una versione specifica usando /rest/api/3/search/jql
 func GetIssuesForVersion(client *Client, projectKey string, versionName string) ([]Issue, error) {
-	// JQL per trovare tutte le issue padre nella versione specificata
-	jql := fmt.Sprintf(`project = "%s" AND fixVersion = "%s" AND issuetype not in (Sub-task, Sub-bug)`, projectKey, versionName)
+	fmt.Print("⏳ Recupero ticket in rilascio...")
 
-	// Costruisci l'URL con query parameters secondo la documentazione
+	// JQL per trovare tutte le issue nella versione specificata, escludendo quelle completate
+	jql := fmt.Sprintf(`project = "%s" AND fixVersion = "%s" AND statusCategory != Done AND issuetype not in (Sub-task, Sub-bug)`, projectKey, versionName)
+
 	params := url.Values{}
 	params.Add("jql", jql)
 	params.Add("startAt", "0")
 	params.Add("maxResults", "100")
-	params.Add("fields", "summary,status,assignee,priority,issuetype,parent,subtasks")
+	params.Add("fields", "summary,status,assignee,priority,issuetype,parent,subtasks,epic")
 
-	// Usa l'endpoint GET /rest/api/3/search/jql
 	endpoint := fmt.Sprintf("/rest/api/3/search/jql?%s", params.Encode())
-
-	fmt.Printf("DEBUG: Sending GET to %s\n", endpoint)
 
 	var searchResults SearchResults
 	if err := client.GetJSON(endpoint, &searchResults); err != nil {
+		fmt.Println(" ❌")
 		return nil, fmt.Errorf("errore nella ricerca JQL: %w", err)
 	}
+	fmt.Print(" ✓\n")
 
 	var allIssues []Issue
-	allIssues = append(allIssues, searchResults.Issues...)
+	issueMap := make(map[string]*Issue)
+	epicKeysInRelease := make(map[string]bool) // Epic che sono direttamente nella release
 
-	// Per ogni issue padre, recupera i sub-task
+	// Prima passata: identifica gli Epic nella release e aggiungi tutte le issue
 	for _, issue := range searchResults.Issues {
-		if len(issue.Fields.Subtasks) > 0 {
-			for _, subtaskRef := range issue.Fields.Subtasks {
-				subtask, err := GetIssue(client, subtaskRef.Key)
-				if err != nil {
-					fmt.Printf("Attenzione: impossibile recuperare il sub-task %s: %v\n", subtaskRef.Key, err)
-					continue
-				}
-				allIssues = append(allIssues, *subtask)
-			}
+		issueCopy := issue
+		allIssues = append(allIssues, issueCopy)
+		issueMap[issue.Key] = &issueCopy
+
+		if strings.ToLower(issue.Fields.IssueType.Name) == "epic" {
+			epicKeysInRelease[issue.Key] = true
 		}
 	}
 
+	// Recupera i sub-task per le issue nella release
+	fmt.Print("⏳ Recupero sub-task...")
+	subtaskCount := 0
+	for _, issue := range searchResults.Issues {
+		if len(issue.Fields.Subtasks) > 0 {
+			for _, subtaskRef := range issue.Fields.Subtasks {
+				if _, exists := issueMap[subtaskRef.Key]; exists {
+					continue // già presente
+				}
+
+				subtask, err := GetIssue(client, subtaskRef.Key)
+				if err != nil {
+					continue
+				}
+
+				if subtask.IsCompleted() {
+					continue
+				}
+
+				allIssues = append(allIssues, *subtask)
+				issueMap[subtask.Key] = subtask
+				subtaskCount++
+			}
+		}
+	}
+	fmt.Printf(" ✓ (%d trovati)\n", subtaskCount)
+
+	// Recupera le Story/Task che appartengono agli Epic nella release
+	if len(epicKeysInRelease) > 0 {
+		fmt.Print("⏳ Recupero story collegate agli epic...")
+
+		epicKeys := make([]string, 0, len(epicKeysInRelease))
+		for key := range epicKeysInRelease {
+			epicKeys = append(epicKeys, key)
+		}
+
+		epicJQL := fmt.Sprintf(`project = "%s" AND statusCategory != Done AND "Epic Link" in (%s)`, projectKey, strings.Join(wrapKeys(epicKeys), ","))
+
+		params := url.Values{}
+		params.Add("jql", epicJQL)
+		params.Add("startAt", "0")
+		params.Add("maxResults", "100")
+		params.Add("fields", "summary,status,assignee,priority,issuetype,parent,subtasks,epic")
+
+		epicEndpoint := fmt.Sprintf("/rest/api/3/search/jql?%s", params.Encode())
+
+		var epicResults SearchResults
+		storyCount := 0
+		if err := client.GetJSON(epicEndpoint, &epicResults); err == nil {
+			for _, story := range epicResults.Issues {
+				if _, exists := issueMap[story.Key]; !exists {
+					storyCopy := story
+					allIssues = append(allIssues, storyCopy)
+					issueMap[story.Key] = &storyCopy
+					storyCount++
+
+					// Recupera i sub-task della story
+					if len(story.Fields.Subtasks) > 0 {
+						for _, subtaskRef := range story.Fields.Subtasks {
+							if _, exists := issueMap[subtaskRef.Key]; exists {
+								continue
+							}
+
+							subtask, err := GetIssue(client, subtaskRef.Key)
+							if err != nil {
+								continue
+							}
+
+							if subtask.IsCompleted() {
+								continue
+							}
+
+							allIssues = append(allIssues, *subtask)
+							issueMap[subtask.Key] = subtask
+						}
+					}
+				}
+			}
+		}
+		fmt.Printf(" ✓ (%d trovate)\n", storyCount)
+	}
+
+	fmt.Println()
 	return allIssues, nil
+}
+
+// wrapKeys avvolge le chiavi con virgolette per la JQL
+func wrapKeys(keys []string) []string {
+	wrapped := make([]string, len(keys))
+	for i, key := range keys {
+		wrapped[i] = fmt.Sprintf(`"%s"`, key)
+	}
+	return wrapped
 }
 
 // GetIssue recupera un singolo ticket tramite la sua chiave

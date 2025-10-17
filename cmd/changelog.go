@@ -86,35 +86,92 @@ func generateMarkdownChangelog(version *jira.Version, issues []jira.Issue, inclu
 
 	sb.WriteString("---\n\n")
 
-	// Raggruppa per tipo
-	groupedIssues := make(map[string][]jira.Issue)
+	// Organizza i ticket usando la stessa logica di next-release
+	epics := make(map[string]jira.Issue)
+	epicChildren := make(map[string][]jira.Issue)
+	standaloneIssues := make(map[string][]jira.Issue)
 	subtaskMap := make(map[string][]jira.Issue)
 
+	// Identifica epics e subtask
 	for _, issue := range issues {
+		issueType := strings.ToLower(issue.Fields.IssueType.Name)
+
 		if issue.Fields.IssueType.Subtask {
 			if includeSubtasks && issue.Fields.Parent != nil {
 				parentKey := issue.Fields.Parent.Key
 				subtaskMap[parentKey] = append(subtaskMap[parentKey], issue)
 			}
-		} else {
-			issueType := issue.Fields.IssueType.Name
-			groupedIssues[issueType] = append(groupedIssues[issueType], issue)
+		} else if issueType == "epic" {
+			epics[issue.Key] = issue
 		}
 	}
 
-	// Ordine preferito dei tipi
-	preferredOrder := []string{"Epic", "Story", "Task", "Improvement", "Bug", "Sub-task"}
+	// Organizza children con la stessa logica (epic e parent)
+	for _, issue := range issues {
+		if issue.Fields.IssueType.Subtask || strings.ToLower(issue.Fields.IssueType.Name) == "epic" {
+			continue
+		}
+
+		epicKey := ""
+
+		// Priorità 1: campo Epic
+		if issue.Fields.Epic != nil && issue.Fields.Epic.Key != "" {
+			epicKey = issue.Fields.Epic.Key
+		}
+
+		// Priorità 2: campo Parent se punta a un Epic
+		if epicKey == "" && issue.Fields.Parent != nil && issue.Fields.Parent.Key != "" {
+			parentKey := issue.Fields.Parent.Key
+			if _, isEpic := epics[parentKey]; isEpic {
+				epicKey = parentKey
+			}
+		}
+
+		if epicKey != "" && epics[epicKey].Key != "" {
+			epicChildren[epicKey] = append(epicChildren[epicKey], issue)
+			continue
+		}
+
+		standaloneIssues[issue.Fields.IssueType.Name] = append(standaloneIssues[issue.Fields.IssueType.Name], issue)
+	}
+
+	// Genera output
+	if len(epics) > 0 {
+		sb.WriteString("## 🎯 Epic\n\n")
+		for _, epic := range epics {
+			issueURL := fmt.Sprintf("%s/browse/%s", baseURL, epic.Key)
+			sb.WriteString(fmt.Sprintf("### **[%s](%s)** %s\n\n", epic.Key, issueURL, epic.Fields.Summary))
+
+			if children, ok := epicChildren[epic.Key]; ok && len(children) > 0 {
+				for _, child := range children {
+					childURL := fmt.Sprintf("%s/browse/%s", baseURL, child.Key)
+					sb.WriteString(fmt.Sprintf("- **[%s](%s)**: %s\n", child.Key, childURL, child.Fields.Summary))
+
+					if includeSubtasks {
+						if subtasks, ok := subtaskMap[child.Key]; ok {
+							for _, subtask := range subtasks {
+								subtaskURL := fmt.Sprintf("%s/browse/%s", baseURL, subtask.Key)
+								sb.WriteString(fmt.Sprintf("  - [%s](%s): %s\n", subtask.Key, subtaskURL, subtask.Fields.Summary))
+							}
+						}
+					}
+				}
+				sb.WriteString("\n")
+			}
+		}
+	}
+
+	// Altri tipi
+	preferredOrder := []string{"Story", "Task", "Improvement", "Bug"}
 	typeEmoji := map[string]string{
-		"Epic":        "🎯",
 		"Story":       "✨",
 		"Task":        "📝",
 		"Improvement": "🔧",
 		"Bug":         "🐛",
-		"Sub-task":    "📌",
 	}
 
 	for _, issueType := range preferredOrder {
-		issuesList, ok := groupedIssues[issueType]
+		issuesList, ok := standaloneIssues[issueType]
 		if !ok || len(issuesList) == 0 {
 			continue
 		}
@@ -130,9 +187,8 @@ func generateMarkdownChangelog(version *jira.Version, issues []jira.Issue, inclu
 			issueURL := fmt.Sprintf("%s/browse/%s", baseURL, issue.Key)
 			sb.WriteString(fmt.Sprintf("- **[%s](%s)**: %s\n", issue.Key, issueURL, issue.Fields.Summary))
 
-			// Aggiungi sub-task se richiesto
 			if includeSubtasks {
-				if subtasks, hasSubtasks := subtaskMap[issue.Key]; hasSubtasks {
+				if subtasks, ok := subtaskMap[issue.Key]; ok {
 					for _, subtask := range subtasks {
 						subtaskURL := fmt.Sprintf("%s/browse/%s", baseURL, subtask.Key)
 						sb.WriteString(fmt.Sprintf("  - [%s](%s): %s\n", subtask.Key, subtaskURL, subtask.Fields.Summary))
@@ -143,8 +199,8 @@ func generateMarkdownChangelog(version *jira.Version, issues []jira.Issue, inclu
 		sb.WriteString("\n")
 	}
 
-	// Aggiungi eventuali tipi non previsti
-	for issueType, issuesList := range groupedIssues {
+	// Altri tipi non previsti
+	for issueType, issuesList := range standaloneIssues {
 		found := false
 		for _, preferred := range preferredOrder {
 			if issueType == preferred {
@@ -176,12 +232,58 @@ func generateSlackChangelog(version *jira.Version, issues []jira.Issue, includeS
 	}
 	sb.WriteString(fmt.Sprintf("*Data di rilascio*: %s\n\n", releaseDate))
 
-	groupedIssues := make(map[string][]jira.Issue)
+	// Usa la stessa logica
+	epics := make(map[string]jira.Issue)
+	epicChildren := make(map[string][]jira.Issue)
+	standaloneIssues := make(map[string][]jira.Issue)
+
 	for _, issue := range issues {
-		if !issue.Fields.IssueType.Subtask {
-			issueType := issue.Fields.IssueType.Name
-			groupedIssues[issueType] = append(groupedIssues[issueType], issue)
+		if issue.Fields.IssueType.Subtask {
+			continue
 		}
+		issueType := strings.ToLower(issue.Fields.IssueType.Name)
+		if issueType == "epic" {
+			epics[issue.Key] = issue
+		}
+	}
+
+	for _, issue := range issues {
+		if issue.Fields.IssueType.Subtask || strings.ToLower(issue.Fields.IssueType.Name) == "epic" {
+			continue
+		}
+
+		epicKey := ""
+		if issue.Fields.Epic != nil && issue.Fields.Epic.Key != "" {
+			epicKey = issue.Fields.Epic.Key
+		}
+		if epicKey == "" && issue.Fields.Parent != nil && issue.Fields.Parent.Key != "" {
+			if _, isEpic := epics[issue.Fields.Parent.Key]; isEpic {
+				epicKey = issue.Fields.Parent.Key
+			}
+		}
+
+		if epicKey != "" && epics[epicKey].Key != "" {
+			epicChildren[epicKey] = append(epicChildren[epicKey], issue)
+			continue
+		}
+
+		standaloneIssues[issue.Fields.IssueType.Name] = append(standaloneIssues[issue.Fields.IssueType.Name], issue)
+	}
+
+	if len(epics) > 0 {
+		sb.WriteString("*🎯 Epic*\n")
+		for _, epic := range epics {
+			issueURL := fmt.Sprintf("%s/browse/%s", baseURL, epic.Key)
+			sb.WriteString(fmt.Sprintf("*<%s|%s>* %s\n", issueURL, epic.Key, epic.Fields.Summary))
+
+			if children, ok := epicChildren[epic.Key]; ok {
+				for _, child := range children {
+					childURL := fmt.Sprintf("%s/browse/%s", baseURL, child.Key)
+					sb.WriteString(fmt.Sprintf("  • <%s|%s>: %s\n", childURL, child.Key, child.Fields.Summary))
+				}
+			}
+		}
+		sb.WriteString("\n")
 	}
 
 	typeEmoji := map[string]string{
@@ -191,7 +293,7 @@ func generateSlackChangelog(version *jira.Version, issues []jira.Issue, includeS
 		"Bug":         ":bug:",
 	}
 
-	for issueType, issuesList := range groupedIssues {
+	for issueType, issuesList := range standaloneIssues {
 		if len(issuesList) == 0 {
 			continue
 		}
@@ -217,10 +319,19 @@ func generateHTMLChangelog(version *jira.Version, issues []jira.Issue, includeSu
 	var sb strings.Builder
 
 	sb.WriteString("<html><head><meta charset=\"UTF-8\"><title>Changelog</title>")
-	sb.WriteString("<style>body{font-family:Arial,sans-serif;max-width:800px;margin:40px auto;padding:20px;}")
-	sb.WriteString("h1{color:#0052CC;}h2{color:#333;border-bottom:2px solid #0052CC;padding-bottom:5px;}")
-	sb.WriteString("ul{list-style-type:none;padding-left:0;}li{margin:10px 0;}a{color:#0052CC;text-decoration:none;}")
-	sb.WriteString("a:hover{text-decoration:underline;}.meta{color:#666;font-size:14px;}</style></head><body>")
+	sb.WriteString("<style>")
+	sb.WriteString("body{font-family:Arial,sans-serif;max-width:900px;margin:40px auto;padding:20px;line-height:1.6;}")
+	sb.WriteString("h1{color:#0052CC;border-bottom:3px solid #0052CC;padding-bottom:10px;}")
+	sb.WriteString("h2{color:#333;border-bottom:2px solid #0052CC;padding-bottom:5px;margin-top:30px;}")
+	sb.WriteString("h3{color:#0052CC;margin-top:20px;font-size:1.1em;}")
+	sb.WriteString("ul{list-style-type:none;padding-left:0;}")
+	sb.WriteString("ul ul{padding-left:30px;}")
+	sb.WriteString("li{margin:8px 0;}")
+	sb.WriteString("a{color:#0052CC;text-decoration:none;font-weight:bold;}")
+	sb.WriteString("a:hover{text-decoration:underline;}")
+	sb.WriteString(".meta{color:#666;font-size:14px;margin-bottom:20px;}")
+	sb.WriteString(".epic-box{background:#f4f5f7;padding:15px;margin:10px 0;border-left:4px solid #0052CC;}")
+	sb.WriteString("</style></head><body>")
 
 	sb.WriteString(fmt.Sprintf("<h1>📋 Changelog - Versione %s</h1>", version.Name))
 
@@ -230,11 +341,74 @@ func generateHTMLChangelog(version *jira.Version, issues []jira.Issue, includeSu
 	}
 	sb.WriteString(fmt.Sprintf("<p class=\"meta\"><strong>Data di rilascio</strong>: %s</p>", releaseDate))
 
-	groupedIssues := make(map[string][]jira.Issue)
+	// Usa la stessa logica
+	epics := make(map[string]jira.Issue)
+	epicChildren := make(map[string][]jira.Issue)
+	standaloneIssues := make(map[string][]jira.Issue)
+	subtaskMap := make(map[string][]jira.Issue)
+
 	for _, issue := range issues {
-		if !issue.Fields.IssueType.Subtask {
-			issueType := issue.Fields.IssueType.Name
-			groupedIssues[issueType] = append(groupedIssues[issueType], issue)
+		issueType := strings.ToLower(issue.Fields.IssueType.Name)
+		if issue.Fields.IssueType.Subtask {
+			if includeSubtasks && issue.Fields.Parent != nil {
+				subtaskMap[issue.Fields.Parent.Key] = append(subtaskMap[issue.Fields.Parent.Key], issue)
+			}
+		} else if issueType == "epic" {
+			epics[issue.Key] = issue
+		}
+	}
+
+	for _, issue := range issues {
+		if issue.Fields.IssueType.Subtask || strings.ToLower(issue.Fields.IssueType.Name) == "epic" {
+			continue
+		}
+
+		epicKey := ""
+		if issue.Fields.Epic != nil && issue.Fields.Epic.Key != "" {
+			epicKey = issue.Fields.Epic.Key
+		}
+		if epicKey == "" && issue.Fields.Parent != nil && issue.Fields.Parent.Key != "" {
+			if _, isEpic := epics[issue.Fields.Parent.Key]; isEpic {
+				epicKey = issue.Fields.Parent.Key
+			}
+		}
+
+		if epicKey != "" && epics[epicKey].Key != "" {
+			epicChildren[epicKey] = append(epicChildren[epicKey], issue)
+			continue
+		}
+
+		standaloneIssues[issue.Fields.IssueType.Name] = append(standaloneIssues[issue.Fields.IssueType.Name], issue)
+	}
+
+	if len(epics) > 0 {
+		sb.WriteString("<h2>🎯 Epic</h2>")
+		for _, epic := range epics {
+			issueURL := fmt.Sprintf("%s/browse/%s", baseURL, epic.Key)
+			sb.WriteString("<div class=\"epic-box\">")
+			sb.WriteString(fmt.Sprintf("<h3><a href=\"%s\">%s</a> %s</h3>", issueURL, epic.Key, epic.Fields.Summary))
+
+			if children, ok := epicChildren[epic.Key]; ok && len(children) > 0 {
+				sb.WriteString("<ul>")
+				for _, child := range children {
+					childURL := fmt.Sprintf("%s/browse/%s", baseURL, child.Key)
+					sb.WriteString(fmt.Sprintf("<li><a href=\"%s\">%s</a>: %s", childURL, child.Key, child.Fields.Summary))
+
+					if includeSubtasks {
+						if subtasks, ok := subtaskMap[child.Key]; ok && len(subtasks) > 0 {
+							sb.WriteString("<ul>")
+							for _, subtask := range subtasks {
+								subtaskURL := fmt.Sprintf("%s/browse/%s", baseURL, subtask.Key)
+								sb.WriteString(fmt.Sprintf("<li><a href=\"%s\">%s</a>: %s</li>", subtaskURL, subtask.Key, subtask.Fields.Summary))
+							}
+							sb.WriteString("</ul>")
+						}
+					}
+					sb.WriteString("</li>")
+				}
+				sb.WriteString("</ul>")
+			}
+			sb.WriteString("</div>")
 		}
 	}
 
@@ -245,7 +419,7 @@ func generateHTMLChangelog(version *jira.Version, issues []jira.Issue, includeSu
 		"Bug":         "🐛",
 	}
 
-	for issueType, issuesList := range groupedIssues {
+	for issueType, issuesList := range standaloneIssues {
 		if len(issuesList) == 0 {
 			continue
 		}
@@ -259,8 +433,19 @@ func generateHTMLChangelog(version *jira.Version, issues []jira.Issue, includeSu
 
 		for _, issue := range issuesList {
 			issueURL := fmt.Sprintf("%s/browse/%s", baseURL, issue.Key)
-			sb.WriteString(fmt.Sprintf("<li><strong><a href=\"%s\">%s</a></strong>: %s</li>",
-				issueURL, issue.Key, issue.Fields.Summary))
+			sb.WriteString(fmt.Sprintf("<li><a href=\"%s\">%s</a>: %s", issueURL, issue.Key, issue.Fields.Summary))
+
+			if includeSubtasks {
+				if subtasks, ok := subtaskMap[issue.Key]; ok && len(subtasks) > 0 {
+					sb.WriteString("<ul>")
+					for _, subtask := range subtasks {
+						subtaskURL := fmt.Sprintf("%s/browse/%s", baseURL, subtask.Key)
+						sb.WriteString(fmt.Sprintf("<li><a href=\"%s\">%s</a>: %s</li>", subtaskURL, subtask.Key, subtask.Fields.Summary))
+					}
+					sb.WriteString("</ul>")
+				}
+			}
+			sb.WriteString("</li>")
 		}
 		sb.WriteString("</ul>")
 	}
