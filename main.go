@@ -1,1 +1,7 @@
-package jira_release_manager
+package main
+
+import "jira-release-manager/cmd"
+
+func main() {
+	cmd.Execute()
+}
