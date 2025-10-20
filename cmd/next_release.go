@@ -14,13 +14,16 @@ var nextReleaseCmd = &cobra.Command{
 	Use:   "next-release",
 	Short: "Mostra i ticket della prossima release pianificata per un progetto.",
 	Long: `Recupera e visualizza tutti i ticket (inclusi i sub-task) pianificati 
-per la prossima versione di rilascio non ancora pubblicata.`,
+per la prossima versione di rilascio non ancora pubblicata.
+Usa --version per specificare una versione esatta.`,
 	Example: `  jira-release-manager next-release --project PROJ
-  jira-release-manager next-release -p PROJ --detailed`,
+  jira-release-manager next-release -p PROJ --detailed
+  jira-release-manager next-release -p PROJ -v "Release 1.2.3"`,
 	Run: func(cmd *cobra.Command, args []string) {
 		projectKey, _ := cmd.Flags().GetString("project")
 		detailed, _ := cmd.Flags().GetBool("detailed")
 		debug, _ := cmd.Flags().GetBool("debug")
+		versionName, _ := cmd.Flags().GetString("version") // <-- Aggiunto
 
 		if projectKey == "" {
 			log.Fatal("Il flag --project è obbligatorio.")
@@ -31,24 +34,50 @@ per la prossima versione di rilascio non ancora pubblicata.`,
 			log.Fatalf("Errore nella creazione del client Jira: %v", err)
 		}
 
-		fmt.Printf("🔎 Ricerca della prossima release per il progetto %s...\n", projectKey)
-		nextVersion, err := jira.FindNextReleaseVersion(client, projectKey)
-		if err != nil {
-			log.Fatalf("Errore: %v", err)
+		var versionToFetch *jira.Version
+
+		// Se la versione non è specificata, trova la prossima
+		if versionName == "" {
+			fmt.Printf("🔎 Ricerca della prossima release per il progetto %s...\n", projectKey)
+			nextVersion, err := jira.FindNextReleaseVersion(client, projectKey)
+			if err != nil {
+				log.Fatalf("Errore: %v", err)
+			}
+			versionToFetch = nextVersion
+		} else {
+			// Se la versione è specificata, cerca quella
+			fmt.Printf("🔎 Ricerca della versione specificata '%s'...\n", versionName)
+			allVersions, err := jira.GetAllProjectVersions(client, projectKey)
+			if err != nil {
+				log.Fatalf("Errore nel recupero versioni: %v", err)
+			}
+
+			var found *jira.Version
+			for i, v := range allVersions {
+				if v.Name == versionName {
+					found = &allVersions[i]
+					break
+				}
+			}
+			if found == nil {
+				log.Fatalf("Errore: Versione '%s' non trovata per il progetto %s", versionName, projectKey)
+			}
+			versionToFetch = found
 		}
 
 		releaseDate := "Non specificata"
-		if nextVersion.ReleaseDate != "" {
-			releaseDate = nextVersion.ReleaseDate
+		if versionToFetch.ReleaseDate != "" {
+			releaseDate = versionToFetch.ReleaseDate
 		}
 
-		fmt.Printf("✅ Prossima release trovata: %s (Data: %s)\n", nextVersion.Name, releaseDate)
-		if nextVersion.Description != "" {
-			fmt.Printf("   Descrizione: %s\n", nextVersion.Description)
+		fmt.Printf("✅ Release trovata: %s (Data: %s)\n", versionToFetch.Name, releaseDate)
+		if versionToFetch.Description != "" {
+			fmt.Printf("   Descrizione: %s\n", versionToFetch.Description)
 		}
 		fmt.Println()
 
-		issues, err := jira.GetIssuesForVersion(client, projectKey, nextVersion.Name)
+		// Usa il nome della versione trovata per recuperare le issue
+		issues, err := jira.GetIssuesForVersion(client, projectKey, versionToFetch.Name)
 		if err != nil {
 			log.Fatalf("Errore nel recupero dei ticket: %v", err)
 		}
@@ -150,7 +179,7 @@ per la prossima versione di rilascio non ancora pubblicata.`,
 		}
 
 		fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-		fmt.Printf("  TICKET PIANIFICATI PER LA VERSIONE '%s'\n", nextVersion.Name)
+		fmt.Printf("  TICKET PIANIFICATI PER LA VERSIONE '%s'\n", versionToFetch.Name)
 		fmt.Printf("  (Esclusi i ticket completati)\n")
 		fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
 
@@ -292,4 +321,5 @@ func init() {
 	nextReleaseCmd.Flags().StringP("project", "p", "", "Chiave del progetto Jira (es. PROJ)")
 	nextReleaseCmd.Flags().BoolP("detailed", "d", false, "Mostra informazioni dettagliate per ogni ticket")
 	nextReleaseCmd.Flags().Bool("debug", false, "Mostra informazioni di debug sulla gerarchia")
+	nextReleaseCmd.Flags().StringP("version", "v", "", "Nome esatto della versione Jira (opzionale, default: prossima release)") // <-- Aggiunto
 }

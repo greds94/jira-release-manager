@@ -7,9 +7,8 @@ import (
 	"strings"
 )
 
-// FindNextReleaseVersion trova la prima versione non rilasciata per un dato progetto.
-func FindNextReleaseVersion(client *Client, projectKey string) (*Version, error) {
-	// Recupera il progetto con le versioni usando API v3
+// GetAllProjectVersions recupera tutte le versioni per un progetto, ordinate.
+func GetAllProjectVersions(client *Client, projectKey string) ([]Version, error) {
 	endpoint := fmt.Sprintf("/rest/api/3/project/%s?expand=versions", projectKey)
 
 	var project Project
@@ -17,9 +16,40 @@ func FindNextReleaseVersion(client *Client, projectKey string) (*Version, error)
 		return nil, fmt.Errorf("impossibile recuperare il progetto %s: %w", projectKey, err)
 	}
 
+	versions := project.Versions
+
+	// Ordina le versioni
+	sort.Slice(versions, func(i, j int) bool {
+		// Priorità a quelle con ReleaseDate
+		if versions[i].ReleaseDate != "" && versions[j].ReleaseDate == "" {
+			return true
+		}
+		if versions[i].ReleaseDate == "" && versions[j].ReleaseDate != "" {
+			return false
+		}
+		if versions[i].ReleaseDate != "" && versions[j].ReleaseDate != "" {
+			if versions[i].ReleaseDate != versions[j].ReleaseDate {
+				// Ordina per data di rilascio
+				return versions[i].ReleaseDate < versions[j].ReleaseDate
+			}
+		}
+		// Fallback su nome
+		return versions[i].Name < versions[j].Name
+	})
+
+	return versions, nil
+}
+
+// FindNextReleaseVersion trova la prima versione non rilasciata per un dato progetto.
+func FindNextReleaseVersion(client *Client, projectKey string) (*Version, error) {
+	versions, err := GetAllProjectVersions(client, projectKey)
+	if err != nil {
+		return nil, err
+	}
+
 	// Filtra le versioni non rilasciate e non archiviate
 	var unreleasedVersions []Version
-	for _, v := range project.Versions {
+	for _, v := range versions {
 		if !v.Released && !v.Archived {
 			unreleasedVersions = append(unreleasedVersions, v)
 		}
@@ -29,16 +59,7 @@ func FindNextReleaseVersion(client *Client, projectKey string) (*Version, error)
 		return nil, fmt.Errorf("nessuna versione non rilasciata trovata per il progetto %s", projectKey)
 	}
 
-	// Ordina le versioni per data di rilascio (se disponibile) o per nome
-	sort.Slice(unreleasedVersions, func(i, j int) bool {
-		// Se entrambe hanno date di rilascio, usa quelle
-		if unreleasedVersions[i].ReleaseDate != "" && unreleasedVersions[j].ReleaseDate != "" {
-			return unreleasedVersions[i].ReleaseDate < unreleasedVersions[j].ReleaseDate
-		}
-		// Altrimenti ordina per nome
-		return unreleasedVersions[i].Name < unreleasedVersions[j].Name
-	})
-
+	// Già ordinate da GetAllProjectVersions
 	return &unreleasedVersions[0], nil
 }
 

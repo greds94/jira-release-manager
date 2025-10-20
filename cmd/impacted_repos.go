@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 
 	"jira-release-manager/internal/jira"
 
@@ -12,12 +13,15 @@ import (
 
 var impactedReposCmd = &cobra.Command{
 	Use:   "impacted-repos",
-	Short: "Mostra i repository impattati (etichette) dalla prossima release.",
-	Long: `Recupera tutti i ticket della prossima release e ne estrae le etichette (labels)
-per identificare i repository o i componenti impattati.`,
-	Example: `  jira-release-manager impacted-repos --project PROJ`,
+	Short: "Mostra le issue raggruppate per repository (etichetta).",
+	Long: `Recupera tutti i ticket per una versione e li raggruppa
+per etichetta, per mostrare l'impatto su ogni repository.
+Se --version non è specificato, usa la prossima release.`,
+	Example: `  jira-release-manager impacted-repos -p PROJ
+  jira-release-manager impacted-repos -p PROJ --version "Release 1.2.3"`,
 	Run: func(cmd *cobra.Command, args []string) {
 		projectKey, _ := cmd.Flags().GetString("project")
+		versionName, _ := cmd.Flags().GetString("version")
 
 		if projectKey == "" {
 			log.Fatal("Il flag --project è obbligatorio.")
@@ -28,15 +32,20 @@ per identificare i repository o i componenti impattati.`,
 			log.Fatalf("Errore nella creazione del client Jira: %v", err)
 		}
 
-		fmt.Printf("🔎 Ricerca della prossima release per il progetto %s...\n", projectKey)
-		nextVersion, err := jira.FindNextReleaseVersion(client, projectKey)
-		if err != nil {
-			log.Fatalf("Errore: %v", err)
+		// Se la versione non è specificata, trova la prossima
+		if versionName == "" {
+			fmt.Printf("🔎 Ricerca della prossima release per il progetto %s...\n", projectKey)
+			nextVersion, err := jira.FindNextReleaseVersion(client, projectKey)
+			if err != nil {
+				log.Fatalf("Errore: %v", err)
+			}
+			versionName = nextVersion.Name
+			fmt.Printf("✅ Prossima release trovata: %s\n\n", versionName)
+		} else {
+			fmt.Printf("✅ Utilizzo della versione specificata: %s\n\n", versionName)
 		}
 
-		fmt.Printf("✅ Prossima release trovata: %s\n\n", nextVersion.Name)
-
-		issues, err := jira.GetIssuesForVersion(client, projectKey, nextVersion.Name)
+		issues, err := jira.GetIssuesForVersion(client, projectKey, versionName)
 		if err != nil {
 			log.Fatalf("Errore nel recupero dei ticket: %v", err)
 		}
@@ -46,31 +55,52 @@ per identificare i repository o i componenti impattati.`,
 			return
 		}
 
-		repoLabels := make(map[string]bool)
+		// Mappa per raggruppare: etichetta -> lista di issue
+		labelsToIssues := make(map[string][]jira.Issue)
+		const noLabelKey = "SENZA_ETICHETTA"
 
 		for _, issue := range issues {
-			if len(issue.Fields.Labels) > 0 {
+			// Non mostriamo i sub-task in questa vista, solo i ticket "genitori"
+			if issue.Fields.IssueType.Subtask {
+				continue
+			}
+
+			if len(issue.Fields.Labels) == 0 {
+				labelsToIssues[noLabelKey] = append(labelsToIssues[noLabelKey], issue)
+			} else {
 				for _, label := range issue.Fields.Labels {
-					repoLabels[label] = true
+					labelsToIssues[label] = append(labelsToIssues[label], issue)
 				}
 			}
 		}
 
-		if len(repoLabels) == 0 {
-			fmt.Println("ℹ️ Nessuna etichetta (repository) trovata sui ticket della release.")
+		if len(labelsToIssues) == 0 {
+			fmt.Println("ℹ️ Nessun ticket (non sub-task) trovato per la release.")
 			return
 		}
 
 		var sortedLabels []string
-		for label := range repoLabels {
+		for label := range labelsToIssues {
 			sortedLabels = append(sortedLabels, label)
 		}
 		sort.Strings(sortedLabels)
 
-		fmt.Printf("📂 Repository/Componenti impattati (basato sulle etichette):\n")
-		fmt.Println("────────────────────────────────────────────────────────")
+		fmt.Printf("📂 Impatto sui Repository (raggruppato per etichetta):\n")
+
+		// Stampa
 		for _, label := range sortedLabels {
-			fmt.Printf("- %s\n", label)
+			fmt.Printf("\n%s\n", strings.Repeat("─", 80))
+			if label == noLabelKey {
+				fmt.Printf("🏷️  %s (%d issue)\n", noLabelKey, len(labelsToIssues[label]))
+			} else {
+				fmt.Printf("🏷️  %s (%d issue)\n", label, len(labelsToIssues[label]))
+			}
+			fmt.Printf("%s\n", strings.Repeat("─", 80))
+
+			issuesInLabel := labelsToIssues[label]
+			for _, issue := range issuesInLabel {
+				fmt.Printf("  - [%s] %s (%s)\n", issue.Key, issue.Fields.Summary, issue.Fields.IssueType.Name)
+			}
 		}
 	},
 }
@@ -78,4 +108,5 @@ per identificare i repository o i componenti impattati.`,
 func init() {
 	rootCmd.AddCommand(impactedReposCmd)
 	impactedReposCmd.Flags().StringP("project", "p", "", "Chiave del progetto Jira (es. PROJ)")
+	impactedReposCmd.Flags().StringP("version", "v", "", "Nome esatto della versione Jira (opzionale)")
 }
