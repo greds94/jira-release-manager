@@ -53,7 +53,7 @@ func GetIssuesForVersion(client *Client, projectKey string, versionName string) 
 	params.Add("jql", jql)
 	params.Add("startAt", "0")
 	params.Add("maxResults", "100")
-	params.Add("fields", "summary,status,assignee,priority,issuetype,parent,subtasks,epic")
+	params.Add("fields", "summary,status,assignee,priority,issuetype,parent,subtasks,epic,labels")
 
 	endpoint := fmt.Sprintf("/rest/api/3/search/jql?%s", params.Encode())
 
@@ -121,7 +121,7 @@ func GetIssuesForVersion(client *Client, projectKey string, versionName string) 
 		params.Add("jql", epicJQL)
 		params.Add("startAt", "0")
 		params.Add("maxResults", "100")
-		params.Add("fields", "summary,status,assignee,priority,issuetype,parent,subtasks,epic")
+		params.Add("fields", "summary,status,assignee,priority,issuetype,parent,subtasks,epic,labels")
 
 		epicEndpoint := fmt.Sprintf("/rest/api/3/search/jql?%s", params.Encode())
 
@@ -176,7 +176,7 @@ func wrapKeys(keys []string) []string {
 
 // GetIssue recupera un singolo ticket tramite la sua chiave
 func GetIssue(client *Client, issueKey string) (*Issue, error) {
-	endpoint := fmt.Sprintf("/rest/api/3/issue/%s", issueKey)
+	endpoint := fmt.Sprintf("/rest/api/3/issue/%s?fields=summary,status,assignee,priority,labels", issueKey)
 
 	var issue Issue
 	if err := client.GetJSON(endpoint, &issue); err != nil {

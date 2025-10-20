@@ -46,6 +46,7 @@ type IssueFields struct {
 	Parent      *IssueRef   `json:"parent"`
 	Epic        *EpicLink   `json:"epic,omitempty"` // Link all'epic
 	Subtasks    []IssueRef  `json:"subtasks"`
+	Labels      []string    `json:"labels,omitempty"` // <<< CAMPO AGGIUNTO
 }
 
 // Status rappresenta lo stato di un ticket
