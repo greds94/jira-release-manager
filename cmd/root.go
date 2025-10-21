@@ -3,6 +3,9 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
+
+	"jira-release-manager/internal/jira"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -15,7 +18,33 @@ var rootCmd = &cobra.Command{
 - Visualizzare i ticket della prossima release pianificata
 - Generare changelog formattati per le comunicazioni
 - Avere una overview completa di ticket e sub-task`,
+
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		var err error
+		projectKey, err = cmd.Flags().GetString("project")
+		if err != nil {
+			return err
+		}
+		if projectKey == "" {
+			if cmd.Name() == "help" || strings.HasPrefix(cmd.Name(), "__") {
+				return nil
+			}
+			return fmt.Errorf("il flag --project (-p) è obbligatorio")
+		}
+
+		jiraClient, err = jira.NewClient()
+		if err != nil {
+			return fmt.Errorf("errore nella creazione del client Jira: %w", err)
+		}
+
+		return nil
+	},
 }
+
+var (
+	projectKey string
+	jiraClient *jira.Client
+)
 
 // Execute esegue il comando root
 func Execute() {
@@ -27,18 +56,16 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(initConfig)
+	rootCmd.PersistentFlags().StringP("project", "p", "", "Chiave del progetto Jira (es. PROJ)")
 }
 
 func initConfig() {
-	// Legge le variabili d'ambiente
-	viper.SetEnvPrefix("") // Nessun prefisso, così legge JIRA_URL direttamente
+	viper.SetEnvPrefix("")
 	viper.AutomaticEnv()
 
-	// Opzionalmente, puoi anche leggere da un file .env
 	viper.SetConfigName(".env")
 	viper.SetConfigType("env")
 	viper.AddConfigPath(".")
 
-	// Ignora errore se il file non esiste
 	_ = viper.ReadInConfig()
 }

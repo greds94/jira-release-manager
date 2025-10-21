@@ -2,11 +2,9 @@ package cmd
 
 import (
 	"fmt"
-	"log"
+	"jira-release-manager/internal/jira"
 	"os"
 	"text/tabwriter"
-
-	"jira-release-manager/internal/jira"
 
 	"github.com/spf13/cobra"
 )
@@ -17,26 +15,17 @@ var listVersionsCmd = &cobra.Command{
 	Long: `Recupera tutte le versioni (rilasciate, non rilasciate, archiviate) 
 per un progetto e le mostra in una tabella.`,
 	Example: `  jira-release-manager list-versions -p PROJ`,
-	Run: func(cmd *cobra.Command, args []string) {
-		projectKey, _ := cmd.Flags().GetString("project")
-		if projectKey == "" {
-			log.Fatal("Il flag --project è obbligatorio.")
-		}
 
-		client, err := jira.NewClient()
-		if err != nil {
-			log.Fatalf("Errore: %v", err)
-		}
-
+	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Printf("🔎 Ricerca versioni per il progetto %s...\n\n", projectKey)
-		versions, err := jira.GetAllProjectVersions(client, projectKey)
+		versions, err := jira.GetAllProjectVersions(jiraClient, projectKey)
 		if err != nil {
-			log.Fatalf("Errore: %v", err)
+			return err
 		}
 
 		if len(versions) == 0 {
 			fmt.Println("Nessuna versione trovata per questo progetto.")
-			return
+			return nil
 		}
 
 		// Inizializza tabwriter
@@ -74,10 +63,10 @@ per un progetto e le mostra in una tabella.`,
 		}
 
 		w.Flush()
+		return nil
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(listVersionsCmd)
-	listVersionsCmd.Flags().StringP("project", "p", "", "Chiave del progetto Jira (es. PROJ)")
 }

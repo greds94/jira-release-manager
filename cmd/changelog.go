@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"time"
@@ -18,56 +17,51 @@ var changelogCmd = &cobra.Command{
 	Short: "Genera un changelog in formato Markdown per una versione.",
 	Long: `Permette di selezionare interattivamente una versione e genera un changelog 
 formattato in Markdown (o altri formati) basato sui ticket.`,
-	Example: `  jira-release-manager changelog --project PROJ
+	Example: `  jira-release-manager changelog -p PROJ
   jira-release-manager changelog -p PROJ --output CHANGELOG.md
   jira-release-manager changelog -p PROJ --format slack`,
-	Run: func(cmd *cobra.Command, args []string) {
-		projectKey, _ := cmd.Flags().GetString("project")
+
+	RunE: func(cmd *cobra.Command, args []string) error {
 		outputFile, _ := cmd.Flags().GetString("output")
 		format, _ := cmd.Flags().GetString("format")
 		includeSubtasks, _ := cmd.Flags().GetBool("include-subtasks")
 
-		if projectKey == "" {
-			log.Fatal("Il flag --project è obbligatorio.")
-		}
-
-		client, err := jira.NewClient()
+		versionToFetch, err := selectJiraVersion(jiraClient, projectKey)
 		if err != nil {
-			log.Fatalf("Errore: %v", err)
+			return err
 		}
-
-		// Utilizza il selettore interattivo
-		versionToFetch := selectJiraVersion(client, projectKey)
 		fmt.Printf("✅ Generazione changelog per la versione: %s\n", versionToFetch.Name)
 
-		issues, err := jira.GetIssuesForVersion(client, projectKey, versionToFetch.Name)
+		issues, err := jira.GetIssuesForVersion(jiraClient, projectKey, versionToFetch.Name)
 		if err != nil {
-			log.Fatalf("Errore nel recupero dei ticket: %v", err)
+			return fmt.Errorf("errore nel recupero dei ticket: %w", err)
 		}
 
-		hierarchy := organizer.NewReleaseHierarchy(issues, false)
+		hierarchy := organizer.NewReleaseHierarchy(issues, false) // false per debug
 
 		var changelog string
 		switch format {
 		case "markdown", "md":
-			changelog = generateMarkdownChangelog(versionToFetch, hierarchy, includeSubtasks, client.BaseURL)
+			changelog = generateMarkdownChangelog(versionToFetch, hierarchy, includeSubtasks, jiraClient.BaseURL)
 		case "slack":
-			changelog = generateSlackChangelog(versionToFetch, hierarchy, includeSubtasks, client.BaseURL)
+			changelog = generateSlackChangelog(versionToFetch, hierarchy, includeSubtasks, jiraClient.BaseURL)
 		case "html":
-			changelog = generateHTMLChangelog(versionToFetch, hierarchy, includeSubtasks, client.BaseURL)
+			changelog = generateHTMLChangelog(versionToFetch, hierarchy, includeSubtasks, jiraClient.BaseURL)
 		default:
-			changelog = generateMarkdownChangelog(versionToFetch, hierarchy, includeSubtasks, client.BaseURL)
+			changelog = generateMarkdownChangelog(versionToFetch, hierarchy, includeSubtasks, jiraClient.BaseURL)
 		}
 
 		if outputFile != "" {
 			err := os.WriteFile(outputFile, []byte(changelog), 0644)
 			if err != nil {
-				log.Fatalf("Errore nel salvataggio del file: %v", err)
+				return fmt.Errorf("errore nel salvataggio del file: %w", err)
 			}
 			fmt.Printf("✅ Changelog salvato in: %s\n", outputFile)
 		} else {
 			fmt.Println(changelog)
 		}
+
+		return nil
 	},
 }
 
@@ -93,7 +87,6 @@ func generateMarkdownChangelog(version *jira.Version, hierarchy *organizer.Relea
 	epicChildren := hierarchy.EpicChildren
 	standaloneIssues := hierarchy.StandaloneIssues
 	subtaskMap := hierarchy.SubtaskMap
-
 	printedSubtasks := make(map[string]bool)
 
 	// Genera output
@@ -219,7 +212,6 @@ func generateSlackChangelog(version *jira.Version, hierarchy *organizer.ReleaseH
 	epics := hierarchy.Epics
 	epicChildren := hierarchy.EpicChildren
 	standaloneIssues := hierarchy.StandaloneIssues
-	// subtaskMap := hierarchy.SubtaskMap // Non usato in slack (includeSubtasks non implementato qui)
 
 	if len(epics) > 0 {
 		sb.WriteString("*🎯 Epic*\n")
@@ -296,7 +288,6 @@ func generateHTMLChangelog(version *jira.Version, hierarchy *organizer.ReleaseHi
 	epicChildren := hierarchy.EpicChildren
 	standaloneIssues := hierarchy.StandaloneIssues
 	subtaskMap := hierarchy.SubtaskMap
-
 	printedSubtasks := make(map[string]bool)
 
 	if len(epics) > 0 {
@@ -398,7 +389,6 @@ func generateHTMLChangelog(version *jira.Version, hierarchy *organizer.ReleaseHi
 
 func init() {
 	rootCmd.AddCommand(changelogCmd)
-	changelogCmd.Flags().StringP("project", "p", "", "Chiave del progetto Jira (es. PROJ)")
 	changelogCmd.Flags().StringP("output", "o", "", "File di output per salvare il changelog")
 	changelogCmd.Flags().StringP("format", "f", "markdown", "Formato del changelog: markdown, slack, html")
 	changelogCmd.Flags().BoolP("include-subtasks", "s", false, "Includi i sub-task nel changelog")

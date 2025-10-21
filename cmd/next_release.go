@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"log"
 	"strings"
 
 	"jira-release-manager/internal/jira"
@@ -18,21 +17,15 @@ var nextReleaseCmd = &cobra.Command{
 visualizza tutti i ticket (inclusi i sub-task) pianificati.`,
 	Example: `  jira-release-manager next-release -p PROJ
   jira-release-manager next-release -p PROJ --detailed`,
-	Run: func(cmd *cobra.Command, args []string) {
-		projectKey, _ := cmd.Flags().GetString("project")
+
+	RunE: func(cmd *cobra.Command, args []string) error {
 		detailed, _ := cmd.Flags().GetBool("detailed")
 		debug, _ := cmd.Flags().GetBool("debug")
 
-		if projectKey == "" {
-			log.Fatal("Il flag --project è obbligatorio.")
-		}
-
-		client, err := jira.NewClient()
+		versionToFetch, err := selectJiraVersion(jiraClient, projectKey)
 		if err != nil {
-			log.Fatalf("Errore nella creazione del client Jira: %v", err)
+			return err
 		}
-
-		versionToFetch := selectJiraVersion(client, projectKey)
 
 		releaseDate := "Non specificata"
 		if versionToFetch.ReleaseDate != "" {
@@ -45,15 +38,14 @@ visualizza tutti i ticket (inclusi i sub-task) pianificati.`,
 		}
 		fmt.Println()
 
-		// Usa il nome della versione trovata per recuperare le issue
-		issues, err := jira.GetIssuesForVersion(client, projectKey, versionToFetch.Name)
+		issues, err := jira.GetIssuesForVersion(jiraClient, projectKey, versionToFetch.Name)
 		if err != nil {
-			log.Fatalf("Errore nel recupero dei ticket: %v", err)
+			return fmt.Errorf("errore nel recupero dei ticket: %w", err)
 		}
 
 		if len(issues) == 0 {
 			fmt.Println("⚠️  Nessun ticket trovato per questa versione.")
-			return
+			return nil
 		}
 
 		hierarchy := organizer.NewReleaseHierarchy(issues, debug)
@@ -68,7 +60,6 @@ visualizza tutti i ticket (inclusi i sub-task) pianificati.`,
 		totalChildren := 0
 		totalSubtasks := 0
 		totalStandalone := 0
-
 		printedSubtasks := make(map[string]bool)
 
 		// Stampa gli Epic con le loro Story e sub-task
@@ -150,7 +141,6 @@ visualizza tutti i ticket (inclusi i sub-task) pianificati.`,
 			totalSubtasks += len(orphanedSubtasks) // Aggiungi al conteggio
 		}
 
-		// Statistiche finali (spostate alla fine)
 		fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 		if totalEpics > 0 {
 			fmt.Printf("  TOTALE: %d epic con %d issue figlie, %d issue standalone, %d sub-task\n",
@@ -159,6 +149,8 @@ visualizza tutti i ticket (inclusi i sub-task) pianificati.`,
 			fmt.Printf("  TOTALE: %d issue, %d sub-task\n", totalStandalone, totalSubtasks)
 		}
 		fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+
+		return nil
 	},
 }
 
@@ -223,7 +215,6 @@ func getStatusIcon(status string) string {
 
 func init() {
 	rootCmd.AddCommand(nextReleaseCmd)
-	nextReleaseCmd.Flags().StringP("project", "p", "", "Chiave del progetto Jira (es. PROJ)")
 	nextReleaseCmd.Flags().BoolP("detailed", "d", false, "Mostra informazioni dettagliate per ogni ticket")
 	nextReleaseCmd.Flags().Bool("debug", false, "Mostra informazioni di debug sulla gerarchia")
 }
