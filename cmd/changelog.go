@@ -14,9 +14,9 @@ import (
 
 var changelogCmd = &cobra.Command{
 	Use:   "changelog",
-	Short: "Genera un changelog in formato Markdown per la prossima release.",
-	Long: `Genera un changelog formattato in Markdown basato sui ticket della prossima release.
-Il changelog raggruppa i ticket per tipo e può essere salvato su file.`,
+	Short: "Genera un changelog in formato Markdown per una versione.",
+	Long: `Permette di selezionare interattivamente una versione e genera un changelog 
+formattato in Markdown (o altri formati) basato sui ticket.`,
 	Example: `  jira-release-manager changelog --project PROJ
   jira-release-manager changelog -p PROJ --output CHANGELOG.md
   jira-release-manager changelog -p PROJ --format slack`,
@@ -35,26 +35,25 @@ Il changelog raggruppa i ticket per tipo e può essere salvato su file.`,
 			log.Fatalf("Errore: %v", err)
 		}
 
-		nextVersion, err := jira.FindNextReleaseVersion(client, projectKey)
-		if err != nil {
-			log.Fatalf("Errore: %v", err)
-		}
+		// Utilizza il selettore interattivo
+		versionToFetch := selectJiraVersion(client, projectKey)
+		fmt.Printf("✅ Generazione changelog per la versione: %s\n", versionToFetch.Name)
 
-		issues, err := jira.GetIssuesForVersion(client, projectKey, nextVersion.Name)
+		issues, err := jira.GetIssuesForVersion(client, projectKey, versionToFetch.Name)
 		if err != nil {
-			log.Fatalf("Errore: %v", err)
+			log.Fatalf("Errore nel recupero dei ticket: %v", err)
 		}
 
 		var changelog string
 		switch format {
 		case "markdown", "md":
-			changelog = generateMarkdownChangelog(nextVersion, issues, includeSubtasks, client.BaseURL)
+			changelog = generateMarkdownChangelog(versionToFetch, issues, includeSubtasks, client.BaseURL)
 		case "slack":
-			changelog = generateSlackChangelog(nextVersion, issues, includeSubtasks, client.BaseURL)
+			changelog = generateSlackChangelog(versionToFetch, issues, includeSubtasks, client.BaseURL)
 		case "html":
-			changelog = generateHTMLChangelog(nextVersion, issues, includeSubtasks, client.BaseURL)
+			changelog = generateHTMLChangelog(versionToFetch, issues, includeSubtasks, client.BaseURL)
 		default:
-			changelog = generateMarkdownChangelog(nextVersion, issues, includeSubtasks, client.BaseURL)
+			changelog = generateMarkdownChangelog(versionToFetch, issues, includeSubtasks, client.BaseURL)
 		}
 
 		if outputFile != "" {

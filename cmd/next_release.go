@@ -12,10 +12,10 @@ import (
 
 var nextReleaseCmd = &cobra.Command{
 	Use:   "next-release",
-	Short: "Mostra i ticket della prossima release pianificata per un progetto.",
-	Long: `Recupera e visualizza tutti i ticket (inclusi i sub-task) pianificati 
-per la prossima versione di rilascio non ancora pubblicata.`,
-	Example: `  jira-release-manager next-release --project PROJ
+	Short: "Mostra i ticket di una versione specifica.",
+	Long: `Permette di selezionare interattivamente una versione e 
+visualizza tutti i ticket (inclusi i sub-task) pianificati.`,
+	Example: `  jira-release-manager next-release -p PROJ
   jira-release-manager next-release -p PROJ --detailed`,
 	Run: func(cmd *cobra.Command, args []string) {
 		projectKey, _ := cmd.Flags().GetString("project")
@@ -31,24 +31,21 @@ per la prossima versione di rilascio non ancora pubblicata.`,
 			log.Fatalf("Errore nella creazione del client Jira: %v", err)
 		}
 
-		fmt.Printf("🔎 Ricerca della prossima release per il progetto %s...\n", projectKey)
-		nextVersion, err := jira.FindNextReleaseVersion(client, projectKey)
-		if err != nil {
-			log.Fatalf("Errore: %v", err)
-		}
+		versionToFetch := selectJiraVersion(client, projectKey)
 
 		releaseDate := "Non specificata"
-		if nextVersion.ReleaseDate != "" {
-			releaseDate = nextVersion.ReleaseDate
+		if versionToFetch.ReleaseDate != "" {
+			releaseDate = versionToFetch.ReleaseDate
 		}
 
-		fmt.Printf("✅ Prossima release trovata: %s (Data: %s)\n", nextVersion.Name, releaseDate)
-		if nextVersion.Description != "" {
-			fmt.Printf("   Descrizione: %s\n", nextVersion.Description)
+		fmt.Printf("✅ Release selezionata: %s (Data: %s)\n", versionToFetch.Name, releaseDate)
+		if versionToFetch.Description != "" {
+			fmt.Printf("   Descrizione: %s\n", versionToFetch.Description)
 		}
 		fmt.Println()
 
-		issues, err := jira.GetIssuesForVersion(client, projectKey, nextVersion.Name)
+		// Usa il nome della versione trovata per recuperare le issue
+		issues, err := jira.GetIssuesForVersion(client, projectKey, versionToFetch.Name)
 		if err != nil {
 			log.Fatalf("Errore nel recupero dei ticket: %v", err)
 		}
@@ -150,7 +147,7 @@ per la prossima versione di rilascio non ancora pubblicata.`,
 		}
 
 		fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-		fmt.Printf("  TICKET PIANIFICATI PER LA VERSIONE '%s'\n", nextVersion.Name)
+		fmt.Printf("  TICKET PIANIFICATI PER LA VERSIONE '%s'\n", versionToFetch.Name)
 		fmt.Printf("  (Esclusi i ticket completati)\n")
 		fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
 
