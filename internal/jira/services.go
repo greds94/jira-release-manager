@@ -182,6 +182,31 @@ func GetIssuesForVersion(client *Client, projectKey string, versionName string) 
 		fmt.Printf(" ✓ (%d trovate)\n", storyCount)
 	}
 
+	fmt.Print("⏳ Recupero sub-task 'orfani' (con fixVersion)...")
+	orphanJQL := fmt.Sprintf(`project = "%s" AND fixVersion = "%s" AND statusCategory != Done AND issuetype in (Sub-task, Sub-bug)`, projectKey, versionName)
+
+	orphanParams := url.Values{}
+	orphanParams.Add("jql", orphanJQL)
+	orphanParams.Add("startAt", "0")
+	orphanParams.Add("maxResults", "100")
+	orphanParams.Add("fields", "summary,status,assignee,priority,issuetype,parent,epic,labels")
+
+	orphanEndpoint := fmt.Sprintf("/rest/api/3/search/jql?%s", orphanParams.Encode())
+
+	var orphanResults SearchResults
+	orphanCount := 0
+	if err := client.GetJSON(orphanEndpoint, &orphanResults); err == nil {
+		for _, subtask := range orphanResults.Issues {
+			if _, exists := issueMap[subtask.Key]; !exists {
+				subtaskCopy := subtask
+				allIssues = append(allIssues, subtaskCopy)
+				issueMap[subtask.Key] = &subtaskCopy
+				orphanCount++
+			}
+		}
+	}
+	fmt.Printf(" ✓ (%d trovati)\n", orphanCount)
+
 	fmt.Println()
 	return allIssues, nil
 }

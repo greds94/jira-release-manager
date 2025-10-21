@@ -62,7 +62,7 @@ formattato in Markdown (o altri formati) basato sui ticket.`,
 		if outputFile != "" {
 			err := os.WriteFile(outputFile, []byte(changelog), 0644)
 			if err != nil {
-				log.Fatalf("Errore nel salvaggio del file: %v", err)
+				log.Fatalf("Errore nel salvataggio del file: %v", err)
 			}
 			fmt.Printf("✅ Changelog salvato in: %s\n", outputFile)
 		} else {
@@ -88,12 +88,13 @@ func generateMarkdownChangelog(version *jira.Version, hierarchy *organizer.Relea
 
 	sb.WriteString("---\n\n")
 
-	// <<< REFACTORING: Tutta la logica di organizzazione è stata rimossa.
 	// Usiamo direttamente le mappe dalla struct 'hierarchy'.
 	epics := hierarchy.Epics
 	epicChildren := hierarchy.EpicChildren
 	standaloneIssues := hierarchy.StandaloneIssues
 	subtaskMap := hierarchy.SubtaskMap
+
+	printedSubtasks := make(map[string]bool)
 
 	// Genera output
 	if len(epics) > 0 {
@@ -112,6 +113,7 @@ func generateMarkdownChangelog(version *jira.Version, hierarchy *organizer.Relea
 							for _, subtask := range subtasks {
 								subtaskURL := fmt.Sprintf("%s/browse/%s", baseURL, subtask.Key)
 								sb.WriteString(fmt.Sprintf("  - [%s](%s): %s\n", subtask.Key, subtaskURL, subtask.Fields.Summary))
+								printedSubtasks[subtask.Key] = true
 							}
 						}
 					}
@@ -152,6 +154,7 @@ func generateMarkdownChangelog(version *jira.Version, hierarchy *organizer.Relea
 					for _, subtask := range subtasks {
 						subtaskURL := fmt.Sprintf("%s/browse/%s", baseURL, subtask.Key)
 						sb.WriteString(fmt.Sprintf("  - [%s](%s): %s\n", subtask.Key, subtaskURL, subtask.Fields.Summary))
+						printedSubtasks[subtask.Key] = true
 					}
 				}
 			}
@@ -178,6 +181,27 @@ func generateMarkdownChangelog(version *jira.Version, hierarchy *organizer.Relea
 		}
 	}
 
+	var orphanedSubtasks []jira.Issue
+	if includeSubtasks {
+		for _, subtasks := range subtaskMap {
+			for _, subtask := range subtasks {
+				if _, printed := printedSubtasks[subtask.Key]; !printed {
+					orphanedSubtasks = append(orphanedSubtasks, subtask)
+				}
+			}
+		}
+	}
+
+	if len(orphanedSubtasks) > 0 {
+		sb.WriteString("## 📎 Sub-task Aggiuntivi\n\n")
+		sb.WriteString("*(Ticket con fixVersion, ma genitore non in questa release o completato)*\n\n")
+		for _, subtask := range orphanedSubtasks {
+			subtaskURL := fmt.Sprintf("%s/browse/%s", baseURL, subtask.Key)
+			sb.WriteString(fmt.Sprintf("- [%s](%s): %s\n", subtask.Key, subtaskURL, subtask.Fields.Summary))
+		}
+		sb.WriteString("\n")
+	}
+
 	return sb.String()
 }
 
@@ -192,7 +216,6 @@ func generateSlackChangelog(version *jira.Version, hierarchy *organizer.ReleaseH
 	}
 	sb.WriteString(fmt.Sprintf("*Data di rilascio*: %s\n\n", releaseDate))
 
-	// <<< REFACTORING: Usiamo direttamente le mappe
 	epics := hierarchy.Epics
 	epicChildren := hierarchy.EpicChildren
 	standaloneIssues := hierarchy.StandaloneIssues
@@ -274,6 +297,8 @@ func generateHTMLChangelog(version *jira.Version, hierarchy *organizer.ReleaseHi
 	standaloneIssues := hierarchy.StandaloneIssues
 	subtaskMap := hierarchy.SubtaskMap
 
+	printedSubtasks := make(map[string]bool)
+
 	if len(epics) > 0 {
 		sb.WriteString("<h2>🎯 Epic</h2>")
 		for _, epic := range epics {
@@ -293,6 +318,7 @@ func generateHTMLChangelog(version *jira.Version, hierarchy *organizer.ReleaseHi
 							for _, subtask := range subtasks {
 								subtaskURL := fmt.Sprintf("%s/browse/%s", baseURL, subtask.Key)
 								sb.WriteString(fmt.Sprintf("<li><a href=\"%s\">%s</a>: %s</li>", subtaskURL, subtask.Key, subtask.Fields.Summary))
+								printedSubtasks[subtask.Key] = true
 							}
 							sb.WriteString("</ul>")
 						}
@@ -334,11 +360,33 @@ func generateHTMLChangelog(version *jira.Version, hierarchy *organizer.ReleaseHi
 					for _, subtask := range subtasks {
 						subtaskURL := fmt.Sprintf("%s/browse/%s", baseURL, subtask.Key)
 						sb.WriteString(fmt.Sprintf("<li><a href=\"%s\">%s</a>: %s</li>", subtaskURL, subtask.Key, subtask.Fields.Summary))
+						printedSubtasks[subtask.Key] = true
 					}
 					sb.WriteString("</ul>")
 				}
 			}
 			sb.WriteString("</li>")
+		}
+		sb.WriteString("</ul>")
+	}
+
+	var orphanedSubtasks []jira.Issue
+	if includeSubtasks {
+		for _, subtasks := range subtaskMap {
+			for _, subtask := range subtasks {
+				if _, printed := printedSubtasks[subtask.Key]; !printed {
+					orphanedSubtasks = append(orphanedSubtasks, subtask)
+				}
+			}
+		}
+	}
+
+	if len(orphanedSubtasks) > 0 {
+		sb.WriteString("<h2>📎 Sub-task Aggiuntivi</h2>")
+		sb.WriteString("<p><em>(Ticket con fixVersion, ma genitore non in questa release o completato)</em></p><ul>")
+		for _, subtask := range orphanedSubtasks {
+			subtaskURL := fmt.Sprintf("%s/browse/%s", baseURL, subtask.Key)
+			sb.WriteString(fmt.Sprintf("<li><a href=\"%s\">%s</a>: %s</li>", subtaskURL, subtask.Key, subtask.Fields.Summary))
 		}
 		sb.WriteString("</ul>")
 	}

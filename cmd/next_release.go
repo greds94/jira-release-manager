@@ -69,6 +69,8 @@ visualizza tutti i ticket (inclusi i sub-task) pianificati.`,
 		totalSubtasks := 0
 		totalStandalone := 0
 
+		printedSubtasks := make(map[string]bool)
+
 		// Stampa gli Epic con le loro Story e sub-task
 		if len(hierarchy.Epics) > 0 {
 			fmt.Printf("📌 EPIC (%d)\n", len(hierarchy.Epics))
@@ -88,16 +90,17 @@ visualizza tutti i ticket (inclusi i sub-task) pianificati.`,
 							totalSubtasks += len(subtasks)
 							for _, subtask := range subtasks {
 								printIssue(subtask, "    ", detailed)
+								printedSubtasks[subtask.Key] = true
 							}
 						}
 					}
 				}
 
-				// Sub-task diretti dell'epic (raro ma possibile)
 				if subtasks, ok := hierarchy.SubtaskMap[epic.Key]; ok && len(subtasks) > 0 {
 					totalSubtasks += len(subtasks)
 					for _, subtask := range subtasks {
 						printIssue(subtask, "  ", detailed)
+						printedSubtasks[subtask.Key] = true
 					}
 				}
 
@@ -119,13 +122,35 @@ visualizza tutti i ticket (inclusi i sub-task) pianificati.`,
 					totalSubtasks += len(subtasks)
 					for _, subtask := range subtasks {
 						printIssue(subtask, "  ", detailed)
+						printedSubtasks[subtask.Key] = true
 					}
 				}
 				fmt.Println()
 			}
 		}
 
-		// Statistiche finali
+		var orphanedSubtasks []jira.Issue
+		for _, subtasks := range hierarchy.SubtaskMap {
+			for _, subtask := range subtasks {
+				if _, printed := printedSubtasks[subtask.Key]; !printed {
+					orphanedSubtasks = append(orphanedSubtasks, subtask)
+				}
+			}
+		}
+
+		if len(orphanedSubtasks) > 0 {
+			fmt.Printf("📌 SUB-TASK AGGIUNTIVI (%d)\n", len(orphanedSubtasks))
+			fmt.Printf("  (Ticket con fixVersion, ma genitore non in release o completato)\n")
+			fmt.Println(strings.Repeat("─", 80))
+
+			for _, subtask := range orphanedSubtasks {
+				printIssue(subtask, "", detailed) // Stampa a livello root
+				fmt.Println()
+			}
+			totalSubtasks += len(orphanedSubtasks) // Aggiungi al conteggio
+		}
+
+		// Statistiche finali (spostate alla fine)
 		fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 		if totalEpics > 0 {
 			fmt.Printf("  TOTALE: %d epic con %d issue figlie, %d issue standalone, %d sub-task\n",
