@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"jira-release-manager/internal/jira"
+	"jira-release-manager/internal/organizer"
 
 	"github.com/spf13/cobra"
 )
@@ -44,22 +45,24 @@ formattato in Markdown (o altri formati) basato sui ticket.`,
 			log.Fatalf("Errore nel recupero dei ticket: %v", err)
 		}
 
+		hierarchy := organizer.NewReleaseHierarchy(issues, false)
+
 		var changelog string
 		switch format {
 		case "markdown", "md":
-			changelog = generateMarkdownChangelog(versionToFetch, issues, includeSubtasks, client.BaseURL)
+			changelog = generateMarkdownChangelog(versionToFetch, hierarchy, includeSubtasks, client.BaseURL)
 		case "slack":
-			changelog = generateSlackChangelog(versionToFetch, issues, includeSubtasks, client.BaseURL)
+			changelog = generateSlackChangelog(versionToFetch, hierarchy, includeSubtasks, client.BaseURL)
 		case "html":
-			changelog = generateHTMLChangelog(versionToFetch, issues, includeSubtasks, client.BaseURL)
+			changelog = generateHTMLChangelog(versionToFetch, hierarchy, includeSubtasks, client.BaseURL)
 		default:
-			changelog = generateMarkdownChangelog(versionToFetch, issues, includeSubtasks, client.BaseURL)
+			changelog = generateMarkdownChangelog(versionToFetch, hierarchy, includeSubtasks, client.BaseURL)
 		}
 
 		if outputFile != "" {
 			err := os.WriteFile(outputFile, []byte(changelog), 0644)
 			if err != nil {
-				log.Fatalf("Errore nel salvataggio del file: %v", err)
+				log.Fatalf("Errore nel salvaggio del file: %v", err)
 			}
 			fmt.Printf("✅ Changelog salvato in: %s\n", outputFile)
 		} else {
@@ -68,7 +71,7 @@ formattato in Markdown (o altri formati) basato sui ticket.`,
 	},
 }
 
-func generateMarkdownChangelog(version *jira.Version, issues []jira.Issue, includeSubtasks bool, baseURL string) string {
+func generateMarkdownChangelog(version *jira.Version, hierarchy *organizer.ReleaseHierarchy, includeSubtasks bool, baseURL string) string {
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("# 📋 Changelog - Versione %s\n\n", version.Name))
@@ -85,54 +88,12 @@ func generateMarkdownChangelog(version *jira.Version, issues []jira.Issue, inclu
 
 	sb.WriteString("---\n\n")
 
-	// Organizza i ticket usando la stessa logica di next-release
-	epics := make(map[string]jira.Issue)
-	epicChildren := make(map[string][]jira.Issue)
-	standaloneIssues := make(map[string][]jira.Issue)
-	subtaskMap := make(map[string][]jira.Issue)
-
-	// Identifica epics e subtask
-	for _, issue := range issues {
-		issueType := strings.ToLower(issue.Fields.IssueType.Name)
-
-		if issue.Fields.IssueType.Subtask {
-			if includeSubtasks && issue.Fields.Parent != nil {
-				parentKey := issue.Fields.Parent.Key
-				subtaskMap[parentKey] = append(subtaskMap[parentKey], issue)
-			}
-		} else if issueType == "epic" {
-			epics[issue.Key] = issue
-		}
-	}
-
-	// Organizza children con la stessa logica (epic e parent)
-	for _, issue := range issues {
-		if issue.Fields.IssueType.Subtask || strings.ToLower(issue.Fields.IssueType.Name) == "epic" {
-			continue
-		}
-
-		epicKey := ""
-
-		// Priorità 1: campo Epic
-		if issue.Fields.Epic != nil && issue.Fields.Epic.Key != "" {
-			epicKey = issue.Fields.Epic.Key
-		}
-
-		// Priorità 2: campo Parent se punta a un Epic
-		if epicKey == "" && issue.Fields.Parent != nil && issue.Fields.Parent.Key != "" {
-			parentKey := issue.Fields.Parent.Key
-			if _, isEpic := epics[parentKey]; isEpic {
-				epicKey = parentKey
-			}
-		}
-
-		if epicKey != "" && epics[epicKey].Key != "" {
-			epicChildren[epicKey] = append(epicChildren[epicKey], issue)
-			continue
-		}
-
-		standaloneIssues[issue.Fields.IssueType.Name] = append(standaloneIssues[issue.Fields.IssueType.Name], issue)
-	}
+	// <<< REFACTORING: Tutta la logica di organizzazione è stata rimossa.
+	// Usiamo direttamente le mappe dalla struct 'hierarchy'.
+	epics := hierarchy.Epics
+	epicChildren := hierarchy.EpicChildren
+	standaloneIssues := hierarchy.StandaloneIssues
+	subtaskMap := hierarchy.SubtaskMap
 
 	// Genera output
 	if len(epics) > 0 {
@@ -220,7 +181,7 @@ func generateMarkdownChangelog(version *jira.Version, issues []jira.Issue, inclu
 	return sb.String()
 }
 
-func generateSlackChangelog(version *jira.Version, issues []jira.Issue, includeSubtasks bool, baseURL string) string {
+func generateSlackChangelog(version *jira.Version, hierarchy *organizer.ReleaseHierarchy, includeSubtasks bool, baseURL string) string {
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("*📋 Changelog - Versione %s*\n\n", version.Name))
@@ -231,43 +192,11 @@ func generateSlackChangelog(version *jira.Version, issues []jira.Issue, includeS
 	}
 	sb.WriteString(fmt.Sprintf("*Data di rilascio*: %s\n\n", releaseDate))
 
-	// Usa la stessa logica
-	epics := make(map[string]jira.Issue)
-	epicChildren := make(map[string][]jira.Issue)
-	standaloneIssues := make(map[string][]jira.Issue)
-
-	for _, issue := range issues {
-		if issue.Fields.IssueType.Subtask {
-			continue
-		}
-		issueType := strings.ToLower(issue.Fields.IssueType.Name)
-		if issueType == "epic" {
-			epics[issue.Key] = issue
-		}
-	}
-
-	for _, issue := range issues {
-		if issue.Fields.IssueType.Subtask || strings.ToLower(issue.Fields.IssueType.Name) == "epic" {
-			continue
-		}
-
-		epicKey := ""
-		if issue.Fields.Epic != nil && issue.Fields.Epic.Key != "" {
-			epicKey = issue.Fields.Epic.Key
-		}
-		if epicKey == "" && issue.Fields.Parent != nil && issue.Fields.Parent.Key != "" {
-			if _, isEpic := epics[issue.Fields.Parent.Key]; isEpic {
-				epicKey = issue.Fields.Parent.Key
-			}
-		}
-
-		if epicKey != "" && epics[epicKey].Key != "" {
-			epicChildren[epicKey] = append(epicChildren[epicKey], issue)
-			continue
-		}
-
-		standaloneIssues[issue.Fields.IssueType.Name] = append(standaloneIssues[issue.Fields.IssueType.Name], issue)
-	}
+	// <<< REFACTORING: Usiamo direttamente le mappe
+	epics := hierarchy.Epics
+	epicChildren := hierarchy.EpicChildren
+	standaloneIssues := hierarchy.StandaloneIssues
+	// subtaskMap := hierarchy.SubtaskMap // Non usato in slack (includeSubtasks non implementato qui)
 
 	if len(epics) > 0 {
 		sb.WriteString("*🎯 Epic*\n")
@@ -314,7 +243,7 @@ func generateSlackChangelog(version *jira.Version, issues []jira.Issue, includeS
 	return sb.String()
 }
 
-func generateHTMLChangelog(version *jira.Version, issues []jira.Issue, includeSubtasks bool, baseURL string) string {
+func generateHTMLChangelog(version *jira.Version, hierarchy *organizer.ReleaseHierarchy, includeSubtasks bool, baseURL string) string {
 	var sb strings.Builder
 
 	sb.WriteString("<html><head><meta charset=\"UTF-8\"><title>Changelog</title>")
@@ -340,45 +269,10 @@ func generateHTMLChangelog(version *jira.Version, issues []jira.Issue, includeSu
 	}
 	sb.WriteString(fmt.Sprintf("<p class=\"meta\"><strong>Data di rilascio</strong>: %s</p>", releaseDate))
 
-	// Usa la stessa logica
-	epics := make(map[string]jira.Issue)
-	epicChildren := make(map[string][]jira.Issue)
-	standaloneIssues := make(map[string][]jira.Issue)
-	subtaskMap := make(map[string][]jira.Issue)
-
-	for _, issue := range issues {
-		issueType := strings.ToLower(issue.Fields.IssueType.Name)
-		if issue.Fields.IssueType.Subtask {
-			if includeSubtasks && issue.Fields.Parent != nil {
-				subtaskMap[issue.Fields.Parent.Key] = append(subtaskMap[issue.Fields.Parent.Key], issue)
-			}
-		} else if issueType == "epic" {
-			epics[issue.Key] = issue
-		}
-	}
-
-	for _, issue := range issues {
-		if issue.Fields.IssueType.Subtask || strings.ToLower(issue.Fields.IssueType.Name) == "epic" {
-			continue
-		}
-
-		epicKey := ""
-		if issue.Fields.Epic != nil && issue.Fields.Epic.Key != "" {
-			epicKey = issue.Fields.Epic.Key
-		}
-		if epicKey == "" && issue.Fields.Parent != nil && issue.Fields.Parent.Key != "" {
-			if _, isEpic := epics[issue.Fields.Parent.Key]; isEpic {
-				epicKey = issue.Fields.Parent.Key
-			}
-		}
-
-		if epicKey != "" && epics[epicKey].Key != "" {
-			epicChildren[epicKey] = append(epicChildren[epicKey], issue)
-			continue
-		}
-
-		standaloneIssues[issue.Fields.IssueType.Name] = append(standaloneIssues[issue.Fields.IssueType.Name], issue)
-	}
+	epics := hierarchy.Epics
+	epicChildren := hierarchy.EpicChildren
+	standaloneIssues := hierarchy.StandaloneIssues
+	subtaskMap := hierarchy.SubtaskMap
 
 	if len(epics) > 0 {
 		sb.WriteString("<h2>🎯 Epic</h2>")

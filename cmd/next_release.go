@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"jira-release-manager/internal/jira"
+	"jira-release-manager/internal/organizer"
 
 	"github.com/spf13/cobra"
 )
@@ -55,96 +56,7 @@ visualizza tutti i ticket (inclusi i sub-task) pianificati.`,
 			return
 		}
 
-		// Organizza i ticket in una struttura gerarchica
-		epics := make(map[string]jira.Issue)
-		epicChildren := make(map[string][]jira.Issue)     // Story/Task sotto epic
-		standaloneIssues := make(map[string][]jira.Issue) // Issue senza epic
-		subtaskMap := make(map[string][]jira.Issue)
-
-		// Prima passata: identifica epics e subtask
-		for _, issue := range issues {
-			issueType := strings.ToLower(issue.Fields.IssueType.Name)
-
-			if issue.Fields.IssueType.Subtask {
-				if issue.Fields.Parent != nil {
-					parentKey := issue.Fields.Parent.Key
-					subtaskMap[parentKey] = append(subtaskMap[parentKey], issue)
-				}
-			} else if issueType == "epic" {
-				epics[issue.Key] = issue
-			}
-		}
-
-		if debug {
-			fmt.Println("\n🔍 DEBUG - Epic trovati:")
-			for key := range epics {
-				fmt.Printf("  - %s\n", key)
-			}
-			fmt.Println()
-		}
-
-		// Seconda passata: organizza story/task sotto epic o come standalone
-		for _, issue := range issues {
-			if issue.Fields.IssueType.Subtask {
-				continue // già gestiti
-			}
-
-			issueType := strings.ToLower(issue.Fields.IssueType.Name)
-			if issueType == "epic" {
-				continue // già gestiti
-			}
-
-			// Determina l'epic parent guardando sia epic che parent
-			epicKey := ""
-
-			// Priorità 1: campo Epic diretto
-			if issue.Fields.Epic != nil && issue.Fields.Epic.Key != "" {
-				epicKey = issue.Fields.Epic.Key
-				if debug {
-					fmt.Printf("🔍 DEBUG - %s ha Epic via campo 'epic': %s\n", issue.Key, epicKey)
-				}
-			}
-
-			// Priorità 2: campo Parent se punta a un Epic
-			if epicKey == "" && issue.Fields.Parent != nil && issue.Fields.Parent.Key != "" {
-				parentKey := issue.Fields.Parent.Key
-				// Verifica se il parent è un epic
-				if _, isEpic := epics[parentKey]; isEpic {
-					epicKey = parentKey
-					if debug {
-						fmt.Printf("🔍 DEBUG - %s ha Epic via campo 'parent': %s\n", issue.Key, epicKey)
-					}
-				}
-			}
-
-			// Se ha un epic parent e l'epic è nella release
-			if epicKey != "" {
-				if _, epicExists := epics[epicKey]; epicExists {
-					epicChildren[epicKey] = append(epicChildren[epicKey], issue)
-					if debug {
-						fmt.Printf("🔍 DEBUG - %s aggiunto sotto epic %s\n", issue.Key, epicKey)
-					}
-					continue
-				} else if debug {
-					fmt.Printf("🔍 DEBUG - %s ha epic %s ma non è nella release\n", issue.Key, epicKey)
-				}
-			}
-
-			// Non ha epic o epic non in release: standalone
-			standaloneIssues[issue.Fields.IssueType.Name] = append(standaloneIssues[issue.Fields.IssueType.Name], issue)
-			if debug {
-				fmt.Printf("🔍 DEBUG - %s aggiunto come standalone\n", issue.Key)
-			}
-		}
-
-		if debug {
-			fmt.Println("\n🔍 DEBUG - Riepilogo:")
-			fmt.Printf("  Epic: %d\n", len(epics))
-			for epicKey, children := range epicChildren {
-				fmt.Printf("  Epic %s ha %d figli\n", epicKey, len(children))
-			}
-			fmt.Println()
-		}
+		hierarchy := organizer.NewReleaseHierarchy(issues, debug)
 
 		fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 		fmt.Printf("  TICKET PIANIFICATI PER LA VERSIONE '%s'\n", versionToFetch.Name)
@@ -152,27 +64,27 @@ visualizza tutti i ticket (inclusi i sub-task) pianificati.`,
 		fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
 
 		// Contatori
-		totalEpics := len(epics)
+		totalEpics := len(hierarchy.Epics)
 		totalChildren := 0
 		totalSubtasks := 0
 		totalStandalone := 0
 
 		// Stampa gli Epic con le loro Story e sub-task
-		if len(epics) > 0 {
-			fmt.Printf("📌 EPIC (%d)\n", len(epics))
+		if len(hierarchy.Epics) > 0 {
+			fmt.Printf("📌 EPIC (%d)\n", len(hierarchy.Epics))
 			fmt.Println(strings.Repeat("─", 80))
 
-			for _, epic := range epics {
+			for _, epic := range hierarchy.Epics {
 				printIssue(epic, "", detailed)
 
 				// Stampa le Story/Task dell'Epic
-				if children, ok := epicChildren[epic.Key]; ok && len(children) > 0 {
+				if children, ok := hierarchy.EpicChildren[epic.Key]; ok && len(children) > 0 {
 					totalChildren += len(children)
 					for _, child := range children {
 						printIssue(child, "  ", detailed)
 
 						// Stampa i sub-task
-						if subtasks, ok := subtaskMap[child.Key]; ok && len(subtasks) > 0 {
+						if subtasks, ok := hierarchy.SubtaskMap[child.Key]; ok && len(subtasks) > 0 {
 							totalSubtasks += len(subtasks)
 							for _, subtask := range subtasks {
 								printIssue(subtask, "    ", detailed)
@@ -182,7 +94,7 @@ visualizza tutti i ticket (inclusi i sub-task) pianificati.`,
 				}
 
 				// Sub-task diretti dell'epic (raro ma possibile)
-				if subtasks, ok := subtaskMap[epic.Key]; ok && len(subtasks) > 0 {
+				if subtasks, ok := hierarchy.SubtaskMap[epic.Key]; ok && len(subtasks) > 0 {
 					totalSubtasks += len(subtasks)
 					for _, subtask := range subtasks {
 						printIssue(subtask, "  ", detailed)
@@ -194,7 +106,7 @@ visualizza tutti i ticket (inclusi i sub-task) pianificati.`,
 		}
 
 		// Stampa gli altri ticket (non Epic) raggruppati per tipo
-		for issueType, issues := range standaloneIssues {
+		for issueType, issues := range hierarchy.StandaloneIssues {
 			fmt.Printf("📌 %s (%d)\n", strings.ToUpper(issueType), len(issues))
 			fmt.Println(strings.Repeat("─", 80))
 			totalStandalone += len(issues)
@@ -203,7 +115,7 @@ visualizza tutti i ticket (inclusi i sub-task) pianificati.`,
 				printIssue(issue, "", detailed)
 
 				// Stampa i sub-task
-				if subtasks, ok := subtaskMap[issue.Key]; ok && len(subtasks) > 0 {
+				if subtasks, ok := hierarchy.SubtaskMap[issue.Key]; ok && len(subtasks) > 0 {
 					totalSubtasks += len(subtasks)
 					for _, subtask := range subtasks {
 						printIssue(subtask, "  ", detailed)
