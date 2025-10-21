@@ -197,7 +197,7 @@ func wrapKeys(keys []string) []string {
 
 // GetIssue recupera un singolo ticket tramite la sua chiave
 func GetIssue(client *Client, issueKey string) (*Issue, error) {
-	endpoint := fmt.Sprintf("/rest/api/3/issue/%s?fields=summary,status,assignee,priority,labels", issueKey)
+	endpoint := fmt.Sprintf("/rest/api/3/issue/%s?fields=summary,status,assignee,priority,labels,issuetype,parent,epic", issueKey)
 
 	var issue Issue
 	if err := client.GetJSON(endpoint, &issue); err != nil {
