@@ -14,20 +14,17 @@ import (
 
 var changelogCmd = &cobra.Command{
 	Use:   "changelog",
-	Short: "Genera un changelog in formato Markdown per la prossima release.",
-	Long: `Genera un changelog formattato in Markdown basato sui ticket della prossima release.
-Il changelog raggruppa i ticket per tipo e può essere salvato su file.
-Usa --version per specificare una versione esatta.`,
+	Short: "Genera un changelog in formato Markdown per una versione.",
+	Long: `Permette di selezionare interattivamente una versione e genera un changelog 
+formattato in Markdown (o altri formati) basato sui ticket.`,
 	Example: `  jira-release-manager changelog --project PROJ
   jira-release-manager changelog -p PROJ --output CHANGELOG.md
-  jira-release-manager changelog -p PROJ --format slack
-  jira-release-manager changelog -p PROJ -v "Release 1.2.3"`,
+  jira-release-manager changelog -p PROJ --format slack`,
 	Run: func(cmd *cobra.Command, args []string) {
 		projectKey, _ := cmd.Flags().GetString("project")
 		outputFile, _ := cmd.Flags().GetString("output")
 		format, _ := cmd.Flags().GetString("format")
 		includeSubtasks, _ := cmd.Flags().GetBool("include-subtasks")
-		versionName, _ := cmd.Flags().GetString("version")
 
 		if projectKey == "" {
 			log.Fatal("Il flag --project è obbligatorio.")
@@ -38,38 +35,9 @@ Usa --version per specificare una versione esatta.`,
 			log.Fatalf("Errore: %v", err)
 		}
 
-		var versionToFetch *jira.Version
-
-		// Se la versione non è specificata, trova la prossima
-		if versionName == "" {
-			fmt.Printf("🔎 Ricerca della prossima release per il progetto %s...\n", projectKey)
-			nextVersion, err := jira.FindNextReleaseVersion(client, projectKey)
-			if err != nil {
-				log.Fatalf("Errore: %v", err)
-			}
-			versionToFetch = nextVersion
-		} else {
-			// Se la versione è specificata, cerca quella
-			fmt.Printf("🔎 Ricerca della versione specificata '%s'...\n", versionName)
-			allVersions, err := jira.GetAllProjectVersions(client, projectKey)
-			if err != nil {
-				log.Fatalf("Errore nel recupero versioni: %v", err)
-			}
-
-			var found *jira.Version
-			for i, v := range allVersions {
-				if v.Name == versionName {
-					found = &allVersions[i]
-					break
-				}
-			}
-			if found == nil {
-				log.Fatalf("Errore: Versione '%s' non trovata per il progetto %s", versionName, projectKey)
-			}
-			versionToFetch = found
-		}
-
-		fmt.Printf("✅ Utilizzo della versione: %s\n", versionToFetch.Name)
+		// Utilizza il selettore interattivo
+		versionToFetch := selectJiraVersion(client, projectKey)
+		fmt.Printf("✅ Generazione changelog per la versione: %s\n", versionToFetch.Name)
 
 		issues, err := jira.GetIssuesForVersion(client, projectKey, versionToFetch.Name)
 		if err != nil {
@@ -492,5 +460,4 @@ func init() {
 	changelogCmd.Flags().StringP("output", "o", "", "File di output per salvare il changelog")
 	changelogCmd.Flags().StringP("format", "f", "markdown", "Formato del changelog: markdown, slack, html")
 	changelogCmd.Flags().BoolP("include-subtasks", "s", false, "Includi i sub-task nel changelog")
-	changelogCmd.Flags().StringP("version", "v", "", "Nome esatto della versione Jira (opzionale, default: prossima release)") // <-- Aggiunto
 }
