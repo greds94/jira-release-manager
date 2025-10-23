@@ -40,9 +40,6 @@ I ticket senza etichetta vengono ignorati.`,
 		labelsToIssues := make(map[string][]jira.Issue)
 
 		for _, issue := range issues {
-			if issue.Fields.IssueType.Subtask {
-				continue
-			}
 			if len(issue.Fields.Labels) > 0 {
 				for _, label := range issue.Fields.Labels {
 					labelsToIssues[label] = append(labelsToIssues[label], issue)
