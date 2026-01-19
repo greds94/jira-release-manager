@@ -36,3 +36,6 @@ release:
   github:
     owner: greds94
     name: jira-release-manager
+  replace_existing_artifacts: true
+  replace_existing_draft: true
+  draft: false
