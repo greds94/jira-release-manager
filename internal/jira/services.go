@@ -68,7 +68,7 @@ func GetIssuesForVersion(client *Client, projectKey string, versionName string) 
 	fmt.Print("⏳ Recupero ticket in rilascio...")
 
 	// JQL per trovare tutte le issue nella versione specificata, escludendo quelle completate
-	jql := fmt.Sprintf(`project = "%s" AND fixVersion = "%s" AND statusCategory != Done AND issuetype not in (Sub-task, Sub-bug)`, projectKey, versionName)
+	jql := fmt.Sprintf(`project = "%s" AND fixVersion = "%s" AND issuetype not in (Sub-task, Sub-bug)`, projectKey, versionName)
 
 	params := url.Values{}
 	params.Add("jql", jql)
